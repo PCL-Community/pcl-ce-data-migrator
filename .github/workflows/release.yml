@@ -1,0 +1,71 @@
+name: Release
+
+on:
+  release:
+    types: [created]
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Release ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Windows x64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            name: pcl-ce-data-migrator-x86_64-pc-windows-msvc.zip
+
+          # Windows ARM64
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            name: pcl-ce-data-migrator-aarch64-pc-windows-msvc.zip
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Show version info
+        run: |
+          rustc --version
+          cargo --version
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            ./target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package
+        run: |
+          cd target/${{ matrix.target }}/release
+          7z a ../../../${{ matrix.name }} pcl-ce-data-migrator.exe
+          cd -
+
+      - name: Upload to Release
+        uses: softprops/action-gh-release@v2.5.0
+        with:
+          files: |
+            ${{ matrix.name }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
