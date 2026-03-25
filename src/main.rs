@@ -19,7 +19,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn run() -> Result<(), AppError> {
-    println!("PCL CE 数据迁移工具 v1.0 by tangge233");
+    println!("PCL CE 数据迁移工具 v1.0 by PCL Community");
 
     let base_dir = env::current_dir()?;
     if base_dir.read_dir()?.skip(2).any(|_| true) {
