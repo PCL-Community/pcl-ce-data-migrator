@@ -1,6 +1,7 @@
-use std::{env, fs::DirEntry, io::stdin};
+use std::{env, path::PathBuf};
 
 use chrono::Local;
+use dialoguer::Select;
 use serde_json::Value;
 use tokio::fs;
 
@@ -24,7 +25,7 @@ async fn main() -> Result<(), AppError> {
         fs::create_dir(&bak_dir).await?;
     }
 
-    let mut bak_files: Vec<DirEntry> = vec![];
+    let mut bak_files: Vec<PathBuf> = vec![];
 
     for bak_file in bak_dir.read_dir()? {
         let bak_file = bak_file?;
@@ -32,22 +33,26 @@ async fn main() -> Result<(), AppError> {
         let file_name = bak_file.file_name();
         let file_name = file_name.to_string_lossy();
         if meta.is_file() && file_name.ends_with("bak") {
-            bak_files.push(bak_file);
+            bak_files.push(bak_file.path());
         }
     }
 
     println!("在当前目录下存储有 {0} 个备份文件", bak_files.len());
 
-    println!("选择操作：");
-    println!("[1] 创建新数据备份");
-    println!("[2] 使用数据备份");
+    let choice = Select::new()
+        .with_prompt("选择操作")
+        .item("创建新数据备份")
+        .item("使用数据备份")
+        .item("取消")
+        .default(0)
+        .interact()
+        .unwrap();
 
-    let choice = read_int()?;
     let mut config_file = env::home_dir().ok_or(AppError::EnvNotFound)?;
     config_file.push("AppData\\Roaming\\PCLCE\\config.v1.json");
 
     match choice {
-        1 => {
+        0 => {
             if !config_file.exists() {
                 println!("没有找到配置文件，退出。");
             } else {
@@ -71,18 +76,25 @@ async fn main() -> Result<(), AppError> {
                 print!("数据备份文件已保存到 {:?}", bak_file_location);
             }
         }
-        2 => {
+        1 => {
             println!("请选择需要使用的文件");
             for (i, item) in bak_files.iter().enumerate() {
                 println!("[{i}] {:?}", item);
             }
 
-            let choice = read_int()?;
+            let files: Vec<&str> = bak_files.iter().map(|x| x.to_str().unwrap()).collect();
+            let choice = Select::new()
+                .with_prompt("选择操作")
+                .item("取消")
+                .items(&files)
+                .default(0)
+                .interact()
+                .unwrap();
 
-            if choice < bak_files.len() {
-                let selected_file = bak_files[choice].path();
+            if choice != 0 && choice <= bak_files.len() {
+                let selected_file = &bak_files[choice - 1];
                 println!("读取数据：{:?}", selected_file);
-                let bak_content = std::fs::read_to_string(&selected_file)?;
+                let bak_content = std::fs::read_to_string(selected_file)?;
 
                 let bak_content = serde_json::from_str::<BakData>(&bak_content)?;
 
@@ -103,21 +115,13 @@ async fn main() -> Result<(), AppError> {
 
                 std::fs::write(config_file, serde_json::to_string(&cfg_data)?)?;
                 println!("备份已应用");
-            } else {
-                println!("选择超出范围")
             }
         }
+        2 => {}
         _ => {
             println!("操作无效");
         }
     }
 
     Ok(())
-}
-
-fn read_int() -> Result<usize, AppError> {
-    let mut choice = String::new();
-    stdin().read_line(&mut choice).map_err(AppError::IOError)?;
-    let choice = choice.trim().parse::<usize>()?;
-    Ok(choice)
 }
