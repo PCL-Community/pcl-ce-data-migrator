@@ -2,7 +2,7 @@
 name = "pcl-ce-data-migrator"
 version = "0.1.0"
 edition = "2024"
-author = "PCL Community"
+authors = ["PCL Community"]
 
 [dependencies]
 anyhow = "1.0.102"
