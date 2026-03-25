@@ -1,7 +1,7 @@
 use std::{env, path::PathBuf};
 
 use chrono::Local;
-use dialoguer::Select;
+use dialoguer::{MultiSelect, Select};
 use serde_json::Value;
 use tokio::fs;
 
@@ -11,7 +11,15 @@ mod config_reader;
 mod errors;
 
 #[tokio::main]
-async fn main() -> Result<(), AppError> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    if let Err(e) = run().await {
+        eprintln!("错误：{}", e);
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+async fn run() -> Result<(), AppError> {
     println!("PCL CE 数据迁移工具 v1.0 by tangge233");
 
     let base_dir = env::current_dir()?;
@@ -43,13 +51,20 @@ async fn main() -> Result<(), AppError> {
         .with_prompt("选择操作")
         .item("创建新数据备份")
         .item("使用数据备份")
+        .item("删除备份")
         .item("取消")
         .default(0)
         .interact()
         .unwrap();
 
-    let mut config_file = env::home_dir().ok_or(AppError::EnvNotFound)?;
-    config_file.push("AppData\\Roaming\\PCLCE\\config.v1.json");
+    let mut data_dir = env::home_dir().ok_or(AppError::EnvNotFound)?;
+    data_dir.push("AppData\\Roaming\\PCLCE");
+    if !data_dir.exists() {
+        tokio::fs::create_dir(&data_dir).await?;
+    }
+
+    let mut config_file = data_dir.clone();
+    config_file.push("config.v1.json");
 
     match choice {
         0 => {
@@ -57,7 +72,7 @@ async fn main() -> Result<(), AppError> {
                 println!("没有找到配置文件，退出。");
             } else {
                 println!("配置文件路径：{:?}", config_file);
-                let content = std::fs::read_to_string(&config_file)?;
+                let content = tokio::fs::read_to_string(&config_file).await?;
                 let content: Value = serde_json::from_str(&content)?;
 
                 let bak_data = BakData {
@@ -72,21 +87,18 @@ async fn main() -> Result<(), AppError> {
                     format!("ce-config-{0}.bak", Local::now().format("%Y-%m-%d %H%M%S"));
                 let mut bak_file_location = bak_dir.clone();
                 bak_file_location.push(bak_file_name);
-                std::fs::write(&bak_file_location, save_bak_content)?;
+                tokio::fs::write(&bak_file_location, save_bak_content).await?;
                 print!("数据备份文件已保存到 {:?}", bak_file_location);
             }
         }
         1 => {
             println!("请选择需要使用的文件");
-            for (i, item) in bak_files.iter().enumerate() {
-                println!("[{i}] {:?}", item);
-            }
 
-            let files: Vec<&str> = bak_files.iter().map(|x| x.to_str().unwrap()).collect();
+            let show_files: Vec<&str> = bak_files.iter().map(|x| x.to_str().unwrap()).collect();
             let choice = Select::new()
-                .with_prompt("选择操作")
+                .with_prompt("选择文件")
                 .item("取消")
-                .items(&files)
+                .items(&show_files)
                 .default(0)
                 .interact()
                 .unwrap();
@@ -94,11 +106,11 @@ async fn main() -> Result<(), AppError> {
             if choice != 0 && choice <= bak_files.len() {
                 let selected_file = &bak_files[choice - 1];
                 println!("读取数据：{:?}", selected_file);
-                let bak_content = std::fs::read_to_string(selected_file)?;
+                let bak_content = tokio::fs::read_to_string(selected_file).await?;
 
                 let bak_content = serde_json::from_str::<BakData>(&bak_content)?;
 
-                let cfg_data = std::fs::read_to_string(&config_file)?;
+                let cfg_data = tokio::fs::read_to_string(&config_file).await?;
                 let mut cfg_data: Value = serde_json::from_str(&cfg_data)?;
 
                 if let Some(comp_fav) = bak_content.comp_favs {
@@ -113,11 +125,27 @@ async fn main() -> Result<(), AppError> {
                     }
                 }
 
-                std::fs::write(config_file, serde_json::to_string(&cfg_data)?)?;
+                tokio::fs::write(config_file, serde_json::to_string(&cfg_data)?).await?;
                 println!("备份已应用");
             }
         }
-        2 => {}
+        2 => {
+            let show_files: Vec<&str> = bak_files.iter().map(|x| x.to_str().unwrap()).collect();
+
+            let choice = MultiSelect::new()
+                .with_prompt("选择文件")
+                .items(&show_files)
+                .interact()
+                .unwrap();
+
+            for i in choice.iter().rev() {
+                fs::remove_file(&bak_files[i.to_owned()]).await?;
+                bak_files.remove(i.to_owned());
+            }
+
+            println!("已移除 {0} 个文件", choice.len());
+        }
+        3 => {}
         _ => {
             println!("操作无效");
         }
