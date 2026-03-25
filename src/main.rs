@@ -2,12 +2,11 @@ use std::{env, path::PathBuf};
 
 use chrono::Local;
 use dialoguer::{MultiSelect, Select};
-use serde_json::Value;
 use tokio::fs;
 
-use crate::{config_reader::BakData, errors::AppError};
+use crate::{bak_data::BakData, errors::AppError};
 
-mod config_reader;
+mod bak_data;
 mod errors;
 
 #[tokio::main]
@@ -72,22 +71,16 @@ async fn run() -> Result<(), AppError> {
                 println!("没有找到配置文件，退出。");
             } else {
                 println!("配置文件路径：{:?}", config_file);
-                let content = tokio::fs::read_to_string(&config_file).await?;
-                let content: Value = serde_json::from_str(&content)?;
 
-                let bak_data = BakData {
-                    comp_favs: content
-                        .get("CompFavorites")
-                        .map(|x| x.as_str().unwrap().to_string()),
-                };
+                let bak_data = BakData::from_config_content(config_file).await?;
                 println!("已完成数据读取");
 
-                let save_bak_content = serde_json::to_string(&bak_data)?;
                 let bak_file_name =
                     format!("ce-config-{0}.bak", Local::now().format("%Y-%m-%d %H%M%S"));
                 let mut bak_file_location = bak_dir.clone();
                 bak_file_location.push(bak_file_name);
-                tokio::fs::write(&bak_file_location, save_bak_content).await?;
+
+                bak_data.save_to(&bak_file_location).await?;
                 print!("数据备份文件已保存到 {:?}", bak_file_location);
             }
         }
@@ -106,26 +99,9 @@ async fn run() -> Result<(), AppError> {
             if choice != 0 && choice <= bak_files.len() {
                 let selected_file = &bak_files[choice - 1];
                 println!("读取数据：{:?}", selected_file);
-                let bak_content = tokio::fs::read_to_string(selected_file).await?;
+                let bak_content = BakData::create_from(selected_file).await?;
+                bak_content.apply_config_content(&config_file).await?;
 
-                let bak_content = serde_json::from_str::<BakData>(&bak_content)?;
-
-                let cfg_data = tokio::fs::read_to_string(&config_file).await?;
-                let mut cfg_data: Value = serde_json::from_str(&cfg_data)?;
-
-                if let Some(comp_fav) = bak_content.comp_favs {
-                    let new_val = Value::String(comp_fav);
-                    if let Some(comp_fav_item) = cfg_data.get_mut("CompFavorites") {
-                        *comp_fav_item = new_val;
-                    } else {
-                        _ = cfg_data
-                            .as_object_mut()
-                            .unwrap()
-                            .insert("CompFavorites".to_string(), new_val);
-                    }
-                }
-
-                tokio::fs::write(config_file, serde_json::to_string(&cfg_data)?).await?;
                 println!("备份已应用");
             }
         }
