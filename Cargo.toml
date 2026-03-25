@@ -1,8 +1,8 @@
 [package]
-name = "pcl-ce-move-data"
+name = "pcl-ce-data-migrator"
 version = "0.1.0"
 edition = "2024"
-author = "tangge233"
+author = "PCL Community"
 
 [dependencies]
 anyhow = "1.0.102"

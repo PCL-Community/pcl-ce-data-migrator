@@ -210,7 +210,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "pcl-ce-move-data"
+name = "pcl-ce-data-migrator"
 version = "0.1.0"
 dependencies = [
  "anyhow",
