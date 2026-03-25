@@ -75,8 +75,10 @@ async fn run() -> Result<(), AppError> {
                 let bak_data = BakData::from_config_content(config_file).await?;
                 println!("已完成数据读取");
 
-                let bak_file_name =
-                    format!("ce-config-{0}.bak", Local::now().format("%Y-%m-%d %H%M%S"));
+                let bak_file_name = format!(
+                    "ce-config-{0}.bak",
+                    Local::now().format("%Y-%m-%d %H-%M-%S")
+                );
                 let mut bak_file_location = bak_dir.clone();
                 bak_file_location.push(bak_file_name);
 
