@@ -135,6 +135,7 @@ async fn run() -> Result<(), AppError> {
             let choice = MultiSelect::new()
                 .with_prompt("选择文件")
                 .items(&show_files)
+                .with_prompt("使用上下键移动光标，空格选择文件，回车确认选择")
                 .interact()
                 .unwrap();
 
