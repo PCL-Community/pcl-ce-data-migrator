@@ -1,0 +1,125 @@
+import { MaterialWindow, FilledButton, FullscreenDialog, ListView, RadioButton } from "@material";
+
+export component AppWindow inherits MaterialWindow {
+    in-out property <[StandardListViewItem]> backup-list: [];
+    in-out property <int> selected-index: -1;
+    in-out property <string> status-text: "就绪";
+    in-out property <int> backup-count: 0;
+
+    callback create-backup();
+    callback apply-backup();
+    callback delete-backup();
+    callback delete-confirmed();
+    callback show-delete-popup();
+
+    show-delete-popup => { popup-confirm.show(); }
+
+    title: "PCL CE 数据迁移工具";
+    preferred-width: 640px;
+    preferred-height: 500px;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 8px;
+
+        Text {
+            text: "备份文件列表（共 \{root.backup-count} 个）:";
+            font-size: 14px;
+            color: #555;
+        }
+
+        // 使用 RadioButton 的单选列表（ListView 内只能有唯一的 for）
+        Rectangle {
+            vertical-stretch: 1;
+
+            if root.backup-count > 0 : ListView {
+                width: 100%;
+                height: 100%;
+                for item[index] in root.backup-list : HorizontalLayout {
+                    spacing: 12px;
+                    padding-top: 4px;
+                    padding-bottom: 4px;
+                    padding-left: 8px;
+                    padding-right: 8px;
+
+                    RadioButton {
+                        checked: index == root.selected-index;
+                        clicked => { root.selected-index = index; }
+                    }
+
+                    Text {
+                        text: item.text;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                }
+            }
+
+            if root.backup-count == 0 : Text {
+                text: "暂无备份文件";
+                font-size: 14px;
+                color: #999;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                width: 100%;
+                height: 100%;
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 12px;
+            min-height: 32px;
+
+            Text {
+                text: root.status-text;
+                font-size: 13px;
+                color: #666;
+                wrap: word-wrap;
+                horizontal-stretch: 1;
+                vertical-alignment: center;
+            }
+
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: end;
+
+                FilledButton {
+                    text: "创建备份";
+                    clicked => { root.create-backup(); }
+                }
+                FilledButton {
+                    text: "应用备份";
+                    clicked => { root.apply-backup(); }
+                }
+                FilledButton {
+                    text: "删除备份";
+                    clicked => { root.delete-backup(); }
+                }
+            }
+        }
+    }
+
+    // 删除确认弹窗（Material FullscreenDialog）
+    popup-confirm := FullscreenDialog {
+        title: "确认删除备份文件？";
+        actions: ["取消", "确认删除"];
+
+        VerticalLayout {
+            padding: 24px;
+            Text {
+                text: "此操作不可恢复。";
+                font-size: 14px;
+                wrap: word-wrap;
+            }
+        }
+
+        action_clicked(index) => {
+            if index == 0 {
+                popup-confirm.close();
+            } else {
+                root.delete-confirmed();
+                popup-confirm.close();
+            }
+        }
+    }
+}

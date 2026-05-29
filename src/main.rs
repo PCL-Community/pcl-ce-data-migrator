@@ -1,134 +1,214 @@
-use std::{env, path::PathBuf};
+use std::{env, path::PathBuf, rc::Rc, sync::Arc};
 
-use chrono::Local;
-use dialoguer::{MultiSelect, Select};
-use tokio::fs;
+use slint::{ModelRc, StandardListViewItem, VecModel};
+use tokio::runtime::Runtime;
 
-use crate::{bak_data::BakData, errors::AppError};
+use crate::backup_manager::BackupManager;
 
+mod backup_manager;
 mod bak_data;
-mod errors;
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    if let Err(e) = run().await {
-        eprintln!("错误：{}", e);
-        std::process::exit(1);
-    }
-    Ok(())
+slint::include_modules!();
+
+fn make_backup_model(files: &[PathBuf]) -> ModelRc<StandardListViewItem> {
+    let model = Rc::new(VecModel::<StandardListViewItem>::default());
+    let items: Vec<StandardListViewItem> = files
+        .iter()
+        .map(|p| {
+            let name = p
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            StandardListViewItem::from(name.as_str())
+        })
+        .collect();
+    model.set_vec(items);
+    model.clone().into()
 }
 
-async fn run() -> Result<(), AppError> {
-    println!("PCL CE 数据迁移工具 v1.0 by PCL Community");
+fn refresh_ui(ui: &AppWindow, files: &[PathBuf], status: &str) {
+    ui.set_backup_list(make_backup_model(files));
+    ui.set_backup_count(files.len() as i32);
+    ui.set_status_text(status.into());
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let ui = AppWindow::new()?;
 
     let base_dir = env::current_dir()?;
-    if base_dir.read_dir()?.skip(2).any(|_| true) {
-        println!("> 建议将程序放在空目录中运行，以避免不必要的文件覆盖行为");
-    }
+    let bak_dir = base_dir.join("baks");
+    std::fs::create_dir_all(&bak_dir)?;
 
-    let mut bak_dir = base_dir;
-    bak_dir.push("baks");
-    if !bak_dir.exists() {
-        fs::create_dir(&bak_dir).await?;
-    }
+    let home_dir = env::home_dir().expect("无法获取用户主目录");
+    let config_path = home_dir.join("AppData\\Roaming\\PCLCE\\config.v1.json");
 
-    let mut bak_files: Vec<PathBuf> = vec![];
+    let manager = Arc::new(BackupManager::new(bak_dir, config_path));
+    let rt = Arc::new(Runtime::new()?);
 
-    for bak_file in bak_dir.read_dir()? {
-        let bak_file = bak_file?;
-        let meta = bak_file.metadata()?;
-        let file_name = bak_file.file_name();
-        let file_name = file_name.to_string_lossy();
-        if meta.is_file() && file_name.ends_with("bak") {
-            bak_files.push(bak_file.path());
+    let files = rt.block_on(async { manager.list_backups().await });
+    refresh_ui(&ui, &files, "就绪");
+
+    // ── 删除确认（弹窗内点击"确认删除"后执行）─────────────────
+    let weak = ui.as_weak();
+    let rt_cb = rt.clone();
+    let mgr_cb = manager.clone();
+
+    ui.on_delete_confirmed(move || {
+        let weak = weak.clone();
+        let rt = rt_cb.clone();
+        let mgr = mgr_cb.clone();
+
+        let selected: i32 = weak
+            .upgrade()
+            .map(|ui| ui.get_selected_index())
+            .unwrap_or(-1);
+
+        if selected < 0 {
+            weak.upgrade_in_event_loop(move |ui| {
+                ui.set_status_text("请选择一个备份文件".into());
+            })
+            .ok();
+            return;
         }
-    }
 
-    println!("在当前目录下存储有 {0} 个备份文件", bak_files.len());
-
-    let choice = Select::new()
-        .with_prompt("选择操作")
-        .item("创建新数据备份")
-        .item("使用数据备份")
-        .item("删除备份")
-        .item("取消")
-        .default(0)
-        .interact()
-        .unwrap();
-
-    let mut data_dir = env::home_dir().ok_or(AppError::EnvNotFound)?;
-    data_dir.push("AppData\\Roaming\\PCLCE");
-    if !data_dir.exists() {
-        tokio::fs::create_dir(&data_dir).await?;
-    }
-
-    let mut config_file = data_dir.clone();
-    config_file.push("config.v1.json");
-
-    match choice {
-        0 => {
-            if !config_file.exists() {
-                println!("没有找到配置文件，退出。");
-            } else {
-                println!("配置文件路径：{:?}", config_file);
-
-                let bak_data = BakData::from_config_content(config_file).await?;
-                println!("已完成数据读取");
-
-                let bak_file_name = format!(
-                    "ce-config-{0}.bak",
-                    Local::now().format("%Y-%m-%d %H-%M-%S")
-                );
-                let mut bak_file_location = bak_dir.clone();
-                bak_file_location.push(bak_file_name);
-
-                bak_data.save_to(&bak_file_location).await?;
-                print!("数据备份文件已保存到 {:?}", bak_file_location);
-            }
-        }
-        1 => {
-            println!("请选择需要使用的文件");
-
-            let show_files: Vec<&str> = bak_files.iter().map(|x| x.to_str().unwrap()).collect();
-            let choice = Select::new()
-                .with_prompt("选择文件")
-                .item("取消")
-                .items(&show_files)
-                .default(0)
-                .interact()
-                .unwrap();
-
-            if choice != 0 && choice <= bak_files.len() {
-                let selected_file = &bak_files[choice - 1];
-                println!("读取数据：{:?}", selected_file);
-                let bak_content = BakData::create_from(selected_file).await?;
-                bak_content.apply_config_content(&config_file).await?;
-
-                println!("备份已应用");
-            }
-        }
-        2 => {
-            let show_files: Vec<&str> = bak_files.iter().map(|x| x.to_str().unwrap()).collect();
-
-            let choice = MultiSelect::new()
-                .with_prompt("选择文件")
-                .items(&show_files)
-                .with_prompt("使用上下键移动光标，空格选择文件，回车确认选择")
-                .interact()
-                .unwrap();
-
-            for i in choice.iter().rev() {
-                fs::remove_file(&bak_files[i.to_owned()]).await?;
-                bak_files.remove(i.to_owned());
+        rt.spawn(async move {
+            let files = mgr.list_backups().await;
+            if selected as usize >= files.len() {
+                weak.upgrade_in_event_loop(move |ui| {
+                    ui.set_status_text("选中的文件已不存在".into());
+                })
+                .ok();
+                return;
             }
 
-            println!("已移除 {0} 个文件", choice.len());
-        }
-        3 => {}
-        _ => {
-            println!("操作无效");
-        }
-    }
+            let path = files[selected as usize].clone();
+            let file_name = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
 
+            match mgr.delete_backup(&path).await {
+                Ok(updated) => {
+                    weak.upgrade_in_event_loop(move |ui| {
+                        refresh_ui(&ui, &updated, &format!("已删除：{}", file_name));
+                    })
+                    .ok();
+                }
+                Err(msg) => {
+                    weak.upgrade_in_event_loop(move |ui| {
+                        ui.set_status_text(msg.into());
+                    })
+                    .ok();
+                }
+            }
+        });
+    });
+
+    // ── 显示删除确认弹窗 ──────────────────────────────────────
+    let weak = ui.as_weak();
+
+    ui.on_delete_backup(move || {
+        let selected: i32 = weak
+            .upgrade()
+            .map(|ui| ui.get_selected_index())
+            .unwrap_or(-1);
+
+        if selected < 0 {
+            weak.upgrade_in_event_loop(move |ui| {
+                ui.set_status_text("请选择一个备份文件".into());
+            })
+            .ok();
+            return;
+        }
+
+        // 通过 Slint 回调触发 PopupWindow.show()
+        weak.upgrade_in_event_loop(move |ui| {
+            ui.invoke_show_delete_popup();
+        })
+        .ok();
+    });
+
+    // ── 创建备份 ──────────────────────────────────────────────
+    let weak = ui.as_weak();
+    let rt_cb = rt.clone();
+    let mgr_cb = manager.clone();
+
+    ui.on_create_backup(move || {
+        let weak = weak.clone();
+        let rt = rt_cb.clone();
+        let mgr = mgr_cb.clone();
+
+        rt.spawn(async move {
+            match mgr.create_backup().await {
+                Ok((name, files)) => {
+                    weak.upgrade_in_event_loop(move |ui| {
+                        refresh_ui(&ui, &files, &format!("备份已保存：{}", name));
+                    })
+                    .ok();
+                }
+                Err(msg) => {
+                    weak.upgrade_in_event_loop(move |ui| {
+                        ui.set_status_text(msg.into());
+                    })
+                    .ok();
+                }
+            }
+        });
+    });
+
+    // ── 应用备份 ──────────────────────────────────────────────
+    let weak = ui.as_weak();
+    let rt_cb = rt.clone();
+    let mgr_cb = manager.clone();
+
+    ui.on_apply_backup(move || {
+        let weak = weak.clone();
+        let rt = rt_cb.clone();
+        let mgr = mgr_cb.clone();
+
+        let selected: i32 = weak
+            .upgrade()
+            .map(|ui| ui.get_selected_index())
+            .unwrap_or(-1);
+
+        if selected < 0 {
+            weak.upgrade_in_event_loop(move |ui| {
+                ui.set_status_text("请选择一个备份文件".into());
+            })
+            .ok();
+            return;
+        }
+
+        rt.spawn(async move {
+            let files = mgr.list_backups().await;
+            if selected as usize >= files.len() {
+                weak.upgrade_in_event_loop(move |ui| {
+                    ui.set_status_text("选中的文件已不存在".into());
+                })
+                .ok();
+                return;
+            }
+
+            let path = files[selected as usize].clone();
+            match mgr.apply_backup(&path).await {
+                Ok(()) => {
+                    weak.upgrade_in_event_loop(move |ui| {
+                        ui.set_status_text("配置已恢复".into());
+                    })
+                    .ok();
+                }
+                Err(msg) => {
+                    weak.upgrade_in_event_loop(move |ui| {
+                        ui.set_status_text(msg.into());
+                    })
+                    .ok();
+                }
+            }
+        });
+    });
+
+    ui.run()?;
     Ok(())
 }
