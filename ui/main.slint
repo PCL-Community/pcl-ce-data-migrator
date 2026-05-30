@@ -1,7 +1,7 @@
 import {
     MaterialWindow,
     FilledButton,
-    FullscreenDialog,
+    Dialog,
     ListView,
     RadioButton,
 } from "@material";
@@ -120,31 +120,29 @@ export component AppWindow inherits MaterialWindow {
         }
     }
 
-    // 删除确认弹窗（Material FullscreenDialog，占满主窗口）
-    popup-confirm := FullscreenDialog {
-        x: -root.absolute_position.x;
-        y: -root.absolute_position.y;
+    // 删除确认弹窗（Material Dialog，模态覆盖层）
+    popup-confirm := Dialog {
+        x: -root.absolute-position.x;
+        y: -root.absolute-position.y;
         width: root.width;
         height: root.height;
-        title: "确认删除备份文件？";
-        actions: ["取消", "确认删除"];
 
-        VerticalLayout {
-            padding: 24px;
-            Text {
-                text: "此操作不可恢复。";
-                font-size: 14px;
-                wrap: word-wrap;
-            }
+        title: "确认删除备份文件？";
+        default-action-text: "确认删除";
+        actions: ["取消"];
+
+        Text {
+            text: "此操作不可恢复。";
+            font-size: 14px;
+            wrap: word-wrap;
         }
 
-        action_clicked(index) => {
-            if index == 0 {
-                popup-confirm.close();
-            } else {
-                root.delete-confirmed();
-                popup-confirm.close();
-            }
+        default-action-clicked => {
+            root.delete-confirmed();
+            popup-confirm.close();
+        }
+        action-clicked => {
+            popup-confirm.close();
         }
     }
 }

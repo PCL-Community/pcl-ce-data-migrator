@@ -1,3 +1,5 @@
+#![windows_subsystem = "windows"]
+
 use std::{env, path::PathBuf, rc::Rc, sync::Arc};
 
 use slint::{ModelRc, StandardListViewItem, VecModel};
